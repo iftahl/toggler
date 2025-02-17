@@ -1,23 +1,20 @@
 import * as vscode from 'vscode';
 
-let fileCache: vscode.Uri[] = []; // Cache for all relevant files
+let fileCache: Map<string, vscode.Uri[]> = new Map(); // Key: file name, Value: array of URIs
 
 // This method is called when your extension is activated
 export function activate(context: vscode.ExtensionContext) {
+    console.log('Extension activated!');
     // Initialize the file cache
     initializeFileCache();
 
-    // Watch for file changes to keep the cache up-to-date
-    const watcher = vscode.workspace.createFileSystemWatcher('**/*.{c,cpp,h}');
-    watcher.onDidCreate(uri => fileCache.push(uri)); // Add new files to the cache
-    watcher.onDidDelete(uri => {
-        fileCache = fileCache.filter(file => file.fsPath !== uri.fsPath); // Remove deleted files
-    });
-    watcher.onDidChange(uri => {
-        // No specific action needed for changes, as we only care about existence
-    });
+    // Listen for changes in workspace folders
+    vscode.workspace.onDidChangeWorkspaceFolders(event => {
+        console.log('Workspace folders changed:', event);
 
-    context.subscriptions.push(watcher);
+        // Reinitialize the file cache for new folders
+        initializeFileCache();
+    });
 
     // Register the toggle command
     let disposable = vscode.commands.registerCommand('toggler.toggleFile', () => {
@@ -31,15 +28,17 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Determine the target file(s) based on the current file's extension
         if (currentFile.endsWith('.cpp')) {
-            const headerFile = currentFile.replace(/\.cpp$/, '.h');
-            openFile(headerFile);
+            const headerFile = currentFile.replace(/\.cpp$/, '.h').split('/').pop();
+            if (headerFile) openFileByName(headerFile);
         } else if (currentFile.endsWith('.c')) {
-            const headerFile = currentFile.replace(/\.c$/, '.h');
-            openFile(headerFile);
+            const headerFile = currentFile.replace(/\.c$/, '.h').split('/').pop();
+            if (headerFile) openFileByName(headerFile);
         } else if (currentFile.endsWith('.h')) {
-            const cppFile = currentFile.replace(/\.h$/, '.cpp');
-            const cFile = currentFile.replace(/\.h$/, '.c');
-            openFile(cppFile, cFile);
+            const cppFile = currentFile.replace(/\.h$/, '.cpp').split('/').pop();
+            const cFile = currentFile.replace(/\.h$/, '.c').split('/').pop();
+
+            if (cppFile) openFileByName(cppFile);
+            if (cFile) openFileByName(cFile);
         } else {
             vscode.window.showErrorMessage('Current file is not a .c, .cpp, or .h file.');
         }
@@ -57,89 +56,57 @@ async function initializeFileCache() {
     try {
         // Find all .c, .cpp, and .h files in the workspace
         const uris = await vscode.workspace.findFiles('**/*.{c,cpp,h}', '**/node_modules/**');
-        fileCache = uris; // Populate the cache
+        fileCache.clear(); // Clear existing cache
+
+        uris.forEach(uri => {
+            const fileName = uri.fsPath.split('/').pop(); // Extract just the file name
+            if (!fileName) return;
+
+            if (!fileCache.has(fileName)) {
+                fileCache.set(fileName, []);
+            }
+            fileCache.get(fileName)?.push(uri); // Add URI to the array for this file name
+        });
+
+        console.log(`Initialized file cache with ${fileCache.size} unique files.`);
+        vscode.window.showInformationMessage('Initialized file cache, toggler is ready to use!');
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to initialize file cache: ${error}`);
     }
 }
 
-// Open a file by first checking opened editors, then cache, and finally workspace-wide search
-function openFile(primaryPath: string, fallbackPath?: string) {
-    const primaryUri = findInOpenedEditors(primaryPath);
+// Open a file by its name using the smarter cache
+function openFileByName(fileName: string) {
+    const uris = findInCache(fileName);
 
-    if (primaryUri) {
-        // Open the primary file if found in opened editors
-        vscode.workspace.openTextDocument(primaryUri).then(doc => vscode.window.showTextDocument(doc));
-    } else if (fallbackPath) {
-        const fallbackUri = findInOpenedEditors(fallbackPath);
-        if (fallbackUri) {
-            // Open the fallback file if found in opened editors
-            vscode.workspace.openTextDocument(fallbackUri).then(doc => vscode.window.showTextDocument(doc));
+    if (uris && uris.length > 0) {
+        if (uris.length === 1) {
+            // If only one match is found, open it directly
+            vscode.workspace.openTextDocument(uris[0]).then(doc => vscode.window.showTextDocument(doc));
+            console.log(`Opened: ${uris[0].fsPath}`);
         } else {
-            // If neither primary nor fallback are found in opened editors, check the cache
-            openCachedFile(primaryPath, fallbackPath);
+            // If multiple matches are found, prompt the user to select one
+            const options = uris.map(uri => ({
+                label: uri.fsPath,
+                uri: uri,
+            }));
+
+            vscode.window.showQuickPick(options, { placeHolder: 'Select a file to open' }).then(selection => {
+                if (selection) {
+                    vscode.workspace.openTextDocument(selection.uri).then(doc => vscode.window.showTextDocument(doc));
+                    console.log(`Opened: ${selection.uri.fsPath}`);
+                }
+            });
         }
     } else {
-        // If no fallback provided, check the cache for the primary file
-        openCachedFile(primaryPath);
+        // console.log(`File not found in cache: ${fileName}`);
+        // vscode.window.showErrorMessage(`File not found: ${fileName}`);
     }
 }
 
-// Open a file from the cache or fallback to searching in the entire project
-function openCachedFile(primaryPath: string, fallbackPath?: string) {
-    const primaryUri = findInCache(primaryPath);
-
-    if (primaryUri) {
-        // Open the primary file if found in the cache
-        vscode.workspace.openTextDocument(primaryUri).then(doc => vscode.window.showTextDocument(doc));
-    } else if (fallbackPath) {
-        const fallbackUri = findInCache(fallbackPath);
-        if (fallbackUri) {
-            // Open the fallback file if found in the cache
-            vscode.workspace.openTextDocument(fallbackUri).then(doc => vscode.window.showTextDocument(doc));
-        } else {
-            // If neither primary nor fallback are found in the cache, search in the workspace as a last resort
-            searchInWorkspace([primaryPath, fallbackPath]);
-        }
-    } else {
-        // If no fallback provided, search for the primary file in the workspace as a last resort
-        searchInWorkspace([primaryPath]);
-    }
-}
-
-// Search for files in opened editors first
-function findInOpenedEditors(filePath: string): vscode.Uri | undefined {
-    const openedEditors = vscode.window.visibleTextEditors;
-    
-    for (const editor of openedEditors) {
-        if (editor.document.fileName === filePath) {
-            return editor.document.uri;
-        }
-    }
-
-    return undefined; // File not found in opened editors
-}
-
-// Search for files in the workspace as a last resort
-function searchInWorkspace(filePatterns: string[]) {
-    Promise.all(
-        filePatterns.map(pattern =>
-            vscode.workspace.findFiles(`**/${pattern.split('/').pop()}`, '**/node_modules/**', 1)
-        )
-    ).then(results => {
-        const foundFiles = results.flat();
-        if (foundFiles.length > 0) {
-            // Open the first matching file found
-            vscode.workspace.openTextDocument(foundFiles[0]).then(doc => vscode.window.showTextDocument(doc));
-        } else {
-            vscode.window.showErrorMessage(`Unable to find files: ${filePatterns.join(', ')}`);
-        }
-    });
-}
-
-// Find a file in the cache by its path
-function findInCache(filePath: string): vscode.Uri | undefined {
-    return fileCache.find(uri => uri.fsPath === filePath);
+// Find a file in the smarter cache by its name
+function findInCache(fileName: string): vscode.Uri[] | undefined {
+    return fileCache.get(fileName); // Return an array of URIs for this file name
 }
 
 // This method is called when your extension is deactivated

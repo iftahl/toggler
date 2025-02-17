@@ -1,15 +1,18 @@
 {
   "name": "toggler",
-  "displayName": "togglech",
+  "displayName": "toggler",
   "description": "Toggle between header and code files",
-  "version": "0.0.4",
+  "version": "0.0.6",
   "engines": {
-    "vscode": "^1.97.0"
+    "vscode": "^1.50.0"
   },
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished",
+    "workspaceContains:**/*.{c,cpp,h}"
+],
   "main": "./out/extension.js",
 "contributes": {
     "commands": [
@@ -35,7 +38,7 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/vscode": "^1.97.0",
+    "@types/vscode": "^1.50.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
     "@typescript-eslint/eslint-plugin": "^8.22.0",
