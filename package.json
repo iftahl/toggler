@@ -2,7 +2,7 @@
   "name": "toggler",
   "displayName": "toggler",
   "description": "Toggle between header and code files",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "engines": {
     "vscode": "^1.50.0"
   },
