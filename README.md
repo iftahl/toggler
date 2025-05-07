@@ -20,5 +20,5 @@ You can install this extension from the VS Code Marketplace or by manually insta
 
 ## Release Notes
 
-### 0.0.1
+### 0.0.7
 - Initial release with support for toggling between `.c`, `.cpp`, and `.h` files.
